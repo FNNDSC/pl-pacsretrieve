@@ -1,0 +1,1 @@
+.. image:: https://img.shields.io/docker/build/jrottenberg/ffmpeg.svg?style=flat-square   :target: https://hub.docker.com/r/fnndsc/pl-pacsretrieve/
