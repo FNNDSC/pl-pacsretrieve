@@ -187,7 +187,7 @@ class PacsRetrieveApp(ChrisApp):
             output = pypx.move(pacs_settings)
 
 
-        print('Receiving data.')
+        print('Receiving data...')
 
         # wait for files to arrive!
         timer = 0
