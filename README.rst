@@ -31,5 +31,6 @@ Using ``docker run``
     -v $(pwd)/output:/output             \
     fnndsc/pl-pacsretrieve pacsretrieve.py
     --aet CHIPS --aec ORTHANC --aetListener CHIPS \
+    --serverIP 192.168.1.40 --serverPort 4242 \
     --seriesUIDS 0 --dataLocation /incoming
     /input /output

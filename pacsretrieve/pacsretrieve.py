@@ -67,6 +67,7 @@ class PacsRetrieveApp(ChrisApp):
             default=DICOM['calling_aet'],
             optional=True,
             help='aet')
+
         self.add_argument(
             '--aec',
             dest='aec',
@@ -74,6 +75,7 @@ class PacsRetrieveApp(ChrisApp):
             default=DICOM['called_aet'],
             optional=True,
             help='aec')
+
         self.add_argument(
             '--aetListener',
             dest='aet_listener',
@@ -81,6 +83,7 @@ class PacsRetrieveApp(ChrisApp):
             default=DICOM['calling_aet'],
             optional=True,
             help='aet listener')
+
         self.add_argument(
             '--serverIP',
             dest='server_ip',
@@ -88,6 +91,7 @@ class PacsRetrieveApp(ChrisApp):
             default=DICOM['server_ip'],
             optional=True,
             help='PACS server IP')
+
         self.add_argument(
             '--serverPort',
             dest='server_port',
@@ -98,19 +102,28 @@ class PacsRetrieveApp(ChrisApp):
 
         # Retrieve settings
         self.add_argument(
-            '--seriesUIDS',
-            dest='series_uids',
-            type=str,
-            default=',',
-            optional=True,
-            help='Series UIDs to be retrieved')
-        self.add_argument(
             '--dataLocation',
             dest='data_location',
             type=str,
             default=DICOM['dicom_data'],
             optional=True,
             help='Location where the DICOM Listener receives the data.')
+
+        self.add_argument(
+            '--seriesFile',
+            dest='series_file',
+            type=str,
+            default='',
+            optional=True,
+            help='Location of the file containing the series description.')
+
+        self.add_argument(
+            '--seriesUIDS',
+            dest='series_uids',
+            type=str,
+            default=',',
+            optional=True,
+            help='Series UIDs to be retrieved')
 
     def run(self, options):
         """ Run plugin """
@@ -140,6 +153,8 @@ class PacsRetrieveApp(ChrisApp):
 
         # create dummy series file with all series
         series_file = os.path.join(options.inputdir, 'success.txt')
+        if options.series_file != '':
+            series_file = options.series_file;
 
         # uids to be fetched from success.txt
         uids = options.series_uids.split(',')
