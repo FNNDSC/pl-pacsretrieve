@@ -154,7 +154,7 @@ class PacsRetrieveApp(ChrisApp):
         # create dummy series file with all series
         series_file = os.path.join(options.inputdir, 'success.txt')
         if options.series_file != '':
-            series_file = options.series_file;
+            series_file = options.series_file
 
         # uids to be fetched from success.txt
         uids = options.series_uids.split(',')
