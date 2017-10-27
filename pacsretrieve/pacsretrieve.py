@@ -1,5 +1,4 @@
-#                                                            _
-# Pacs retrieve app
+#!/usr/bin/env python3
 #
 # (c) 2016 Fetal-Neonatal Neuroimaging & Developmental Science Center
 #                   Boston Children's Hospital
@@ -210,7 +209,7 @@ class PacsRetrieveApp(ChrisApp):
 
         # Debugging control
         self.b_useDebug         = False
-        self.str_debugFile      = '/dev/null'
+        self.str_debugFile      = '/tmp/pacsretrieve.txt'
         self.b_quiet            = True
         self.dp                 = pfmisc.debug(    
                                             verbosity   = 0,
@@ -294,6 +293,13 @@ class PacsRetrieveApp(ChrisApp):
             default     = '',
             optional    = True,
             help        = 'A JSON formatted file returned by a prior call to pacsquery.')
+        self.add_argument(
+            '--PatientID',
+            dest        = 'str_patientID',
+            type        = str,
+            default     = '',
+            optional    = True,
+            help        = 'The PatientID to query.')
         self.add_argument(
             '--PACSservice',
             dest        = 'str_PACSservice',
@@ -519,11 +525,17 @@ class PacsRetrieveApp(ChrisApp):
         
         str_report      = ''
         l_summaryKeys   = self.str_summaryKeys.split(',')
-        for entry in l_data:
-            str_report  = str_report + "\n"
+
+        if len(l_data):
+            # Header
             for key in l_summaryKeys:
-                str_report  = str_report + "%35s: %-45s\n" % \
-                            (key, entry[key]['value'])
+                str_report  = str_report + "%-60s\t" % key
+
+            # Body
+            for entry in l_data:
+                str_report  = str_report + "\n"
+                for key in l_summaryKeys:
+                    str_report  = str_report + "%-60s\t" % (entry[key]['value'])
 
         if len(self.str_summaryFile):
             str_FQsummaryFile   = os.path.join(self.str_outputDir, self.str_summaryFile) 
@@ -531,7 +543,6 @@ class PacsRetrieveApp(ChrisApp):
             f = open(str_FQsummaryFile, 'w')
             f.write(str_report)
             f.close()
-
 
     def directMessage_checkAndConstruct(self, options):
         """
@@ -552,6 +563,29 @@ class PacsRetrieveApp(ChrisApp):
             except:
                 self.b_canRun   = False
         return ret
+
+    def queryMessage_checkAndConstruct(self, options):
+        """
+        Checks if user specified a query from a pattern of command line flags,
+        and if so, construct the message.
+
+        Return True/False accordingly
+        """
+
+        if len(options.str_patientID) and len(options.str_PACSservice):
+            self.str_patientID      = options.str_patientID
+            self.str_PACSservice    = options.str_PACSservice
+            self.d_msg  = {
+                'action':   'PACSinteract',
+                'meta': {
+                    'do':   'query',
+                    'on': {
+                        'PatientID': self.str_patientID
+                    },
+                    "PACS": self.str_PACSservice
+                }
+            }
+            self.b_canRun   = True
 
     def retrieveMessage_checkAndConstruct(self, options):
         """
@@ -643,7 +677,7 @@ class PacsRetrieveApp(ChrisApp):
         if options.b_version:
             print(str_version)
 
-        pudb.set_trace()
+        # pudb.set_trace()
 
         if not self.manPage_checkAndShow(options) and not options.b_version:
             if len(options.str_pfdcm):
