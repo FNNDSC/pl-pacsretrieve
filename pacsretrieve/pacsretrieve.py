@@ -179,7 +179,7 @@ import pfurl
 import pfmisc
 import pudb
 import shutil
-
+import time
 
 # import the Chris app superclass
 from chrisapp.base import ChrisApp
@@ -225,10 +225,12 @@ class PacsRetrieveApp(ChrisApp):
         # Service and payload vars
         self.str_pfdcm          = ''
         self.str_msg            = ''
-        # list of all retrieve commands
+        # list holder for commands
         self.l_dmsg             = []
         # a single retrieve command
         self.d_msg              = {}
+        # list holder for successful retrieves
+        self.l_retrieveOK       = []
 
         # Alternate, simplified CLI flags
         self.str_patientID      = ''
@@ -390,8 +392,9 @@ class PacsRetrieveApp(ChrisApp):
             useDebug                = self.b_useDebug
         )
         
-        self.dp.qprint('Sending d_msg =\n %s' % self.df_print(d_msg))
+        self.dp.qprint('Sending d_msg ==>\n %s' % self.df_print(d_msg), comms='tx')
         d_response      = json.loads(serviceCall())
+        self.dp.qprint('Received d_response <==\n %s' % self.df_print(d_response), comms='rx')
         return d_response
 
     def man_get(self):
@@ -611,6 +614,57 @@ class PacsRetrieveApp(ChrisApp):
                     }
                 })
             self.b_canRun   = True
+            return self.b_canRun
+
+    def retrieveMessageStatus_checkAndConstruct(self):
+        """
+        Construct a status check on a retrieve event. Essentially, this replaces the
+        'retrieve' string with a 'retrieveStatus' in the already existing message
+        payload. 
+
+        PRECONDITIONS
+        * A populated self.l_dmsg list of dictionaries -- typically created by a 
+          prior call to self.retrieveMessage_checkAndConstruct()
+
+        POSTCONDITIONS
+        * Return True/False accordingly
+        """
+
+        for d in self.l_dmsg:
+            d['meta']['do'] = 'retrieveStatus'
+        return self.b_canRun
+
+    def retrieveMessageCopy_checkAndConstruct(self):
+        """
+        Construct a message that will ask the pfdcm to copy a dirtree
+        from one location to another in its filesystem space.
+
+        PRECONDITIONS
+        * Successful retrieve call.
+
+        POSTCONDITIONS
+        * Return True/False accordingly
+        """
+    
+        self.b_canRun   = False
+        self.l_dmsg     = []
+        for d_copy in self.l_retrieveOK:
+            str_seriesUID       = d_copy['retrieveStatus']['seriesUID']
+            self.l_dmsg.append({
+                'action':   'PACSinteract',
+                'meta': {
+                    'do':   'copy',
+                    'on': {
+                        'series_uid': str_seriesUID
+                    },
+                    'to': {
+                        'path': self.str_outputDir
+                    },
+                    "PACS": self.str_PACSservice
+                }
+            })
+        self.b_canRun   = True
+        return self.b_canRun
 
     def outputFiles_generate(self, options, hits, d_ret, l_data):
         """
@@ -635,7 +689,7 @@ class PacsRetrieveApp(ChrisApp):
                                         summaryFile = options.str_summaryFile
                                         )
        
-    def run_query(self, options):
+    def query_run(self, options):
         """
         Run a query
         """
@@ -651,16 +705,141 @@ class PacsRetrieveApp(ChrisApp):
 
         return d_ret
 
-    def run_retrieve(self, options):
+    def retrieveStatus_callCheck(self, al_call):
         """
-        Run a retrieve
+        Cycle once through the scheduled retrieves and 
+        build a list of return status.
+
         """
-        self.queryTable_read(priorHitsTable = options.str_priorHitsTable)
-        self.retrieveMessage_checkAndConstruct(options)
+        l_ret           = []
+
+        if self.b_canRun:
+            for self.d_msg in al_call:
+                self.dp.qprint('Asking the dcm service for updates on reception of PACS data...')
+                l_ret.append(self.service_call(msg = self.d_msg))
+        return l_ret
+        
+    def retrieveStatus_filterPending(self, al_checkCall, al_checkResult):
+        """
+        Builds a list of status checks that have pending results
+        """
+        l_pendingCall       = []
+        l_pendingResult     = []
+        l_doneResult        = []
+        b_pending           = False
+
+        # pudb.set_trace()
+        for d_call, d_result in zip(al_checkCall, al_checkResult):
+            if not d_result['status']:
+                l_pendingResult.append(d_result)
+                l_pendingCall.append(d_call)
+                b_pending    = True 
+            else:
+                l_doneResult.append(d_result)
+        self.dp.qprint('pendingCalls = %d' % len(l_pendingCall))
+        self.dp.qprint('doneResults  = %d' % len(l_doneResult))
+        self.dp.qprint('b_pending    = %d' % b_pending)
+        return {
+            'status':               b_pending,
+            'pendingResults':       l_pendingResult,
+            'doneResults':          l_doneResult,
+            'pendingCalls':         l_pendingCall
+        }
+
+    def retrieveStatus_callAndFilter(self, al_checkCall):
+        """
+        Perform a call to the remote service on retrieve status
+        and filter the results into 'done' and 'pending'.
+        """
+        l_retrieveStatus        = []
+        l_checkCall             = []
+        d_ret                   = {}
+
+        # First, check on the current status
+        l_checkCall             = list(al_checkCall)
+        l_retrieveStatus        = self.retrieveStatus_callCheck(l_checkCall)
+        d_ret                   = self.retrieveStatus_filterPending(
+                                                l_checkCall, 
+                                                l_retrieveStatus)
+        return d_ret
+
+    def retrieveStatus_process(self, al_checkCall):
+        """
+        Process the retrieve status by waiting until 
+        all asynchronous retrieves have completed.
+        """
+        
+        b_jobsPending           = True
+        b_breakCondition        = False
+        sleepInterval           = 5
+        l_retrieveStatus        = []
+        l_checkCall             = []
+
+        # pudb.set_trace()
+
+        d_ret                   = self.retrieveStatus_callAndFilter(al_checkCall)
+        b_jobsPending           = d_ret['status']
+
+        while b_jobsPending and not b_breakCondition:
+            self.dp.qprint('Pending retrieve jobs detected. Sleeping for %d seconds...' % sleepInterval)
+            time.sleep(sleepInterval)
+
+            self.dp.qprint('Reprocessing retrieve status for pending jobs...')
+            d_ret               = self.retrieveStatus_callAndFilter(d_ret['pendingCalls'])
+            b_jobsPending       = d_ret['status']
+
+            # Update a master list of done results...
+            for done in d_ret['doneResults']: self.l_retrieveOK.append(done)
+            self.dp.qprint('Done list len = %d' % len(self.l_retrieveOK))
+
+    def retrieve_initiate(self, options):
+        """
+        Initiate the actual retrieve calls to the PACS of interest.
+        """
+        l_ret = []
 
         if self.b_canRun:
             for self.d_msg in self.l_dmsg:
-                d_ret   = self.service_call(msg = self.d_msg)
+                self.dp.qprint('Messaging the dcm service to ask the PACS service to push data to us...')
+                l_ret.append(self.service_call(msg = self.d_msg))
+        return l_ret
+
+    def retrieve_resultsCopy(self, ald_msg):
+        """
+        Call the pfdcm service to copy outputs from its internal unpack location
+        to the output dir of this script.
+
+        PRECONDITIONS
+        * The filesystem of this script and that of pfdcm are logically the same.
+        """
+        l_ret = []
+
+        if self.b_canRun:
+            for self.d_msg in ald_msg:
+                self.dp.qprint('Messaging the dcm service copy received DICOM data...')
+                l_ret.append(self.service_call(msg = self.d_msg))
+        return l_ret
+
+    def retrieve_run(self, options):
+        """
+        Run a retrieve
+        """
+        # pudb.set_trace()
+
+        self.queryTable_read(priorHitsTable = options.str_priorHitsTable)
+        self.retrieveMessage_checkAndConstruct(options)
+
+        # Start the retrieves...
+        l_init  = self.retrieve_initiate(options)
+
+        # Check/block on the status...
+        self.retrieveMessageStatus_checkAndConstruct()
+        l_check = self.retrieveStatus_process(self.l_dmsg)
+
+        # Copy the results to the output dir
+        # pudb.set_trace()
+        self.retrieveMessageCopy_checkAndConstruct()
+        l_copy  = self.retrieve_resultsCopy(self.l_dmsg)
 
     def run(self, options):
         """
@@ -684,9 +863,9 @@ class PacsRetrieveApp(ChrisApp):
                 self.str_pfdcm      = options.str_pfdcm
                 if not self.directMessage_checkAndConstruct(options):
                     if options.str_action == 'query':
-                            d_ret = self.run_query(options)
+                            d_ret = self.query_run(options)
                     if options.str_action == 'retrieve': 
-                            d_ret = self.run_retrieve(options)
+                            d_ret = self.retrieve_run(options)
         return d_ret
 
 class PacsRetrieveAppOld(ChrisApp):
