@@ -651,17 +651,15 @@ class PacsRetrieveApp(ChrisApp):
         for d_copy in self.l_retrieveOK:
             str_seriesUID       = d_copy['retrieveStatus']['seriesUID']
             self.l_dmsg.append({
-                'action':   'PACSinteract',
+                'action':   'pullPath',
                 'meta': {
-                    'do':   'copy',
                     'on': {
                         'series_uid': str_seriesUID
                     },
                     'to': {
-                        'path': self.str_outputDir
-                    },
-                    "PACS": self.str_PACSservice
-                }
+                        'path':         os.path.join(self.str_outputDir, str_seriesUID),
+                        "createDir":    True
+                    }                }
             })
         self.b_canRun   = True
         return self.b_canRun
@@ -779,6 +777,8 @@ class PacsRetrieveApp(ChrisApp):
 
         d_ret                   = self.retrieveStatus_callAndFilter(al_checkCall)
         b_jobsPending           = d_ret['status']
+        for done in d_ret['doneResults']: self.l_retrieveOK.append(done)
+        self.dp.qprint('Done list len = %d' % len(self.l_retrieveOK))
 
         while b_jobsPending and not b_breakCondition:
             self.dp.qprint('Pending retrieve jobs detected. Sleeping for %d seconds...' % sleepInterval)
