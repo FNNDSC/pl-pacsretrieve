@@ -7,7 +7,7 @@
 #                        dev@babyMRI.org
 #
 
-str_version = "1.1.0"
+str_version = "1.1.2"
 
 str_name = """
     NAME
