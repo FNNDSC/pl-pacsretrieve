@@ -22,7 +22,7 @@ setup(
       install_requires =   ['pudb', 'pfmisc', 'chrisapp', 'pfurl', 'pypx'],
       test_suite       =   'nose.collector',
       tests_require    =   ['nose'],
-      scripts          =   ['pacretrieve/pacsretrieve.py'],
+      scripts          =   ['pacsretrieve/pacsretrieve.py'],
       license          =   'MIT',
       zip_safe         =   False
      )
