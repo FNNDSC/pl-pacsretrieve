@@ -12,7 +12,7 @@ def readme():
 
 setup(
       name             =   'pacsretrieve',
-      version          =   '1.1.3',
+      version          =   '1.1.4',
       description      =   'Interact with a PACS through an intermediary service, "pfdcm" (not included).',
       long_description =   readme(),
       author           =   'Rudolph Pienaar',
