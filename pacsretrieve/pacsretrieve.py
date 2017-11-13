@@ -182,6 +182,7 @@ import shutil
 import time
 import glob 
 import subprocess
+import re 
 
 # import the Chris app superclass
 from chrisapp.base import ChrisApp
@@ -698,7 +699,10 @@ class PacsRetrieveApp(ChrisApp):
                 d_dicom = d_tags['DICOMtagsGet']['d_dicom']
                 for el in d_dicom.keys():
                     str_replaceTag  = '%%%s' % el
-                    str_path = str_path.replace(str_replaceTag, d_dicom[el])
+                    s               = d_dicom[el]
+                    s               = re.sub(r'[^\w\s-]', '', s).strip()
+                    s               = re.sub(r"\s+", '_', s)
+                    str_path        = str_path.replace(str_replaceTag, s)
                 b_status    = d_tags['status']
 
         return {
