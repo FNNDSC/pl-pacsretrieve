@@ -180,6 +180,8 @@ import pfmisc
 import pudb
 import shutil
 import time
+import glob 
+import subprocess
 
 # import the Chris app superclass
 from chrisapp.base import ChrisApp
@@ -221,6 +223,8 @@ class PacsRetrieveApp(ChrisApp):
         # Input/Output dirs
         self.str_inputDir       = ''
         self.str_outputDir      = ''
+        # List of dirs that contain pulled data
+        self.lstr_outputPull    = []
 
         # Service and payload vars
         self.str_pfdcm          = ''
@@ -310,6 +314,13 @@ class PacsRetrieveApp(ChrisApp):
             optional    = True,
             help        = 'The PACS service to use. Note this a key to a lookup in "pfdcm".')
         self.add_argument(
+            '--pullDirTemplate',
+            dest        = 'str_pullDirTemplate',
+            type        = str,
+            default     = '%SeriesInstanceUID',
+            optional    = True,
+            help        = 'A template for directory names when pulled from "pfdcm".')
+        self.add_argument(
             '--summaryKeys',
             dest        = 'str_summaryKeys',
             type        = str,
@@ -359,6 +370,14 @@ class PacsRetrieveApp(ChrisApp):
             action      = 'store_true',
             optional    = True,
             help        = 'Silence pfurl noise.'),
+        self.add_argument(
+            '--jpgPreview',
+            dest        = 'b_jpgPreview',
+            type        = bool,
+            default     = False,
+            action      = 'store_true',
+            optional    = True,
+            help        = 'Generate a local jpg preview of received DICOM data.'),
         self.add_argument(
             '--version',
             dest        = 'b_version',
@@ -590,10 +609,10 @@ class PacsRetrieveApp(ChrisApp):
             }
             self.b_canRun   = True
 
-    def retrieveMessage_checkAndConstruct(self, options):
+    def retrieveMessage_checkAndConstructBase(self, options):
         """
         Checks if user specified a retrieve from a pattern of command line flags,
-        and if so, construct the message.
+        and if so, construct the base message.
 
         Return True/False accordingly
         """
@@ -616,6 +635,23 @@ class PacsRetrieveApp(ChrisApp):
             self.b_canRun   = True
             return self.b_canRun
 
+    def baseMessage_set(self, *args, **kwargs):
+        """
+        Operates on the "base" message and sets a specified kwarg value.
+
+        PRECONDITIONS
+        * A populated self.l_dmsg list of dictionaries -- typically created by a 
+          prior call to self.retrieveMessage_checkAndConstructBase()
+
+        POSTCONDITIONS
+        * Return True/False accordingly
+        """
+
+        for k, v in kwargs.items():
+            for d in self.l_dmsg:
+                d['meta'][k] = v
+        return self.b_canRun
+
     def retrieveMessageStatus_checkAndConstruct(self):
         """
         Construct a status check on a retrieve event. Essentially, this replaces the
@@ -634,6 +670,42 @@ class PacsRetrieveApp(ChrisApp):
             d['meta']['do'] = 'retrieveStatus'
         return self.b_canRun
 
+    def retrieveMessageCopy_localPathDetermine(self, *args, **kwargs):
+        """
+        Determine the local path name based on seriesUID and directory
+        template.
+        """
+        str_seriesUID   = ''
+        b_status        = False
+        d_ret           = {}
+        str_path        = self.options.str_pullDirTemplate
+
+        for k, v in kwargs.items():
+            if k == 'seriesUID':   str_seriesUID    = v 
+
+        if len(str_seriesUID):
+            d_dicomTag_getCommand   = {
+                'action':   'internalDB',
+                'meta': {
+                    'do':   'DICOMtagsGet',
+                    'on': {
+                        'series_uid':   str_seriesUID
+                    }
+                }
+            }
+            d_tags  = self.service_call(msg = d_dicomTag_getCommand)
+            if d_tags['status']:
+                d_dicom = d_tags['DICOMtagsGet']['d_dicom']
+                for el in d_dicom.keys():
+                    str_replaceTag  = '%%%s' % el
+                    str_path = str_path.replace(str_replaceTag, d_dicom[el])
+                b_status    = d_tags['status']
+
+        return {
+            'status':   b_status,
+            'path':     str_path
+        }
+
     def retrieveMessageCopy_checkAndConstruct(self):
         """
         Construct a message that will ask the pfdcm to copy a dirtree
@@ -646,10 +718,19 @@ class PacsRetrieveApp(ChrisApp):
         * Return True/False accordingly
         """
     
-        self.b_canRun   = False
-        self.l_dmsg     = []
+        # pudb.set_trace()
+        self.b_canRun           = False
+        self.l_dmsg             = []
+        self.lstr_outputPull    = []
         for d_copy in self.l_retrieveOK:
-            str_seriesUID       = d_copy['retrieveStatus']['seriesUID']
+            str_seriesUID   = d_copy['retrieveStatus']['seriesUID']
+            d_path          = self.retrieveMessageCopy_localPathDetermine(seriesUID = str_seriesUID)
+            if d_path['status']:
+                str_localDest   = d_path['path']
+            else:
+                str_localDest   = '%s-notemplate' % str_seriesUID
+            str_localPath       = os.path.join(self.str_outputDir, str_localDest)
+            self.lstr_outputPull.append(str_localPath)
             self.l_dmsg.append({
                 'action':   'pullPath',
                 'meta': {
@@ -657,9 +738,10 @@ class PacsRetrieveApp(ChrisApp):
                         'series_uid': str_seriesUID
                     },
                     'to': {
-                        'path':         os.path.join(self.str_outputDir, str_seriesUID),
+                        'path':         str_localPath,
                         "createDir":    True
-                    }                }
+                    }                
+                }
             })
         self.b_canRun   = True
         return self.b_canRun
@@ -761,7 +843,7 @@ class PacsRetrieveApp(ChrisApp):
                                                 l_retrieveStatus)
         return d_ret
 
-    def retrieveStatus_process(self, al_checkCall):
+    def retrieveStatus_process(self, al_checkCall, **kwargs):
         """
         Process the retrieve status by waiting until 
         all asynchronous retrieves have completed.
@@ -769,9 +851,15 @@ class PacsRetrieveApp(ChrisApp):
         
         b_jobsPending           = True
         b_breakCondition        = False
+        b_waitForPending        = True
         sleepInterval           = 5
         l_retrieveStatus        = []
         l_checkCall             = []
+
+        self.l_retrieveOK       = []
+
+        for k, v in kwargs.items():
+            if k == 'waitForPending':   b_waitForPending = v
 
         # pudb.set_trace()
 
@@ -780,7 +868,7 @@ class PacsRetrieveApp(ChrisApp):
         for done in d_ret['doneResults']: self.l_retrieveOK.append(done)
         self.dp.qprint('Done list len = %d' % len(self.l_retrieveOK))
 
-        while b_jobsPending and not b_breakCondition:
+        while b_jobsPending and not b_breakCondition and b_waitForPending:
             self.dp.qprint('Pending retrieve jobs detected. Sleeping for %d seconds...' % sleepInterval)
             time.sleep(sleepInterval)
 
@@ -791,6 +879,8 @@ class PacsRetrieveApp(ChrisApp):
             # Update a master list of done results...
             for done in d_ret['doneResults']: self.l_retrieveOK.append(done)
             self.dp.qprint('Done list len = %d' % len(self.l_retrieveOK))
+        
+        return d_ret
 
     def retrieve_initiate(self, options):
         """
@@ -800,7 +890,7 @@ class PacsRetrieveApp(ChrisApp):
 
         if self.b_canRun:
             for self.d_msg in self.l_dmsg:
-                self.dp.qprint('Messaging the dcm service to ask the PACS service to push data to us...')
+                self.dp.qprint('Messaging the dcm service to initiate a PACS retrieve...')
                 l_ret.append(self.service_call(msg = self.d_msg))
         return l_ret
 
@@ -816,30 +906,103 @@ class PacsRetrieveApp(ChrisApp):
 
         if self.b_canRun:
             for self.d_msg in ald_msg:
-                self.dp.qprint('Messaging the dcm service copy received DICOM data...')
+                self.dp.qprint('Messaging the dcm service to pull retrieved DICOM data...')
                 l_ret.append(self.service_call(msg = self.d_msg))
         return l_ret
+
+    def jpgPreview_generate(self, *args, **kwargs):
+        """
+        Generate a jpg preview of the DICOMS in a list of directories
+        containing DICOM data.
+        """
+        lstr_DICOMdirs  = []
+        b_status        = False
+        d_ret           = {}
+
+        for k,v in kwargs.items():
+            if k == 'l_DICOMdirs':    lstr_DICOMdirs    = v
+
+        for str_DICOMdir in lstr_DICOMdirs:
+            self.dp.qprint('In directory %s...' % str_DICOMdir)
+            # create a jpg subdir
+            str_jpgDir  = os.path.join(str_DICOMdir, 'jpg')
+            os.makedirs(str_jpgDir)
+            self.dp.qprint('Creating jpg dir %s...' % str_jpgDir)
+
+            # Loop over every DICOM to create a JPG
+            # pudb.set_trace()
+            os.chdir(str_DICOMdir)
+            l_lsDCM     = glob.glob('*.dcm')
+            self.dp.qprint('Generating raw jpg from %d DICOM files...' % len(l_lsDCM))
+            for str_FQfile in l_lsDCM:
+                str_file, str_ext = os.path.splitext(str_FQfile)
+                if str_ext == '.dcm':
+                    str_inputDICOMfile  = os.path.join(str_DICOMdir, str_FQfile)
+                    str_outputJPGfile   = os.path.join(str_jpgDir, str_file) 
+
+                    # Convert to jpg
+                    str_cmd = '/usr/bin/dcmj2pnm +oj +Wh 15 +Fa ' + str_inputDICOMfile + \
+                                ' ' + str_outputJPGfile
+                    str_response = subprocess.run(  str_cmd, 
+                                                    stdout = subprocess.PIPE,
+                                                    stderr = subprocess.STDOUT,
+                                                    shell  = True
+                                                )
+
+            # Loop over every JPG to resize
+            # pudb.set_trace()
+            l_lsjpg     = os.listdir(str_jpgDir)
+            self.dp.qprint('Resizing %d jpg images...' % len(l_lsjpg))
+            for str_FQfile  in l_lsjpg:
+                str_cmd = '/usr/bin/mogrify -resize 96x96 -background none -gravity center -extent 96x96 ' + \
+                            os.path.join(str_jpgDir, str_FQfile)
+                str_response = subprocess.run(  str_cmd, 
+                                                stdout = subprocess.PIPE,
+                                                stderr = subprocess.STDOUT,
+                                                shell  = True
+                                            )
+            # Now create a preview
+            # pudb.set_trace()
+            self.dp.qprint('Appending all jpgs into a preview...')
+            str_cmd = '/usr/bin/convert -append ' + os.path.join(str_jpgDir,   '*') + ' ' + \
+                                                    os.path.join(str_DICOMdir, 'preview.jpg')                                 
+            str_response = subprocess.run(  str_cmd, 
+                                            stdout = subprocess.PIPE,
+                                            stderr = subprocess.STDOUT,
+                                            shell  = True
+                                        )
 
     def retrieve_run(self, options):
         """
         Run a retrieve
         """
-        # pudb.set_trace()
 
+        # First, construct an internal list of message base dictionaries
         self.queryTable_read(priorHitsTable = options.str_priorHitsTable)
-        self.retrieveMessage_checkAndConstruct(options)
+        self.retrieveMessage_checkAndConstructBase(options)
 
-        # Start the retrieves...
+        # Now, check if a given seriesUID already exists in the series_map, possibly
+        # from some prior call...
+        self.baseMessage_set(do = 'retrieveStatus')
+        d_retStatus = self.retrieveStatus_process(self.l_dmsg, waitForPending = False)
+        if d_retStatus['status']:
+            self.l_dmsg = list(d_retStatus['pendingCalls'])
+            self.baseMessage_set(do = 'retrieve')
+
+        # Start the set of pending retrieves...
         l_init  = self.retrieve_initiate(options)
 
         # Check/block on the status...
         self.retrieveMessageStatus_checkAndConstruct()
-        l_check = self.retrieveStatus_process(self.l_dmsg)
+        l_check = self.retrieveStatus_process(self.l_dmsg, waitForPending = True)
 
-        # Copy the results to the output dir
-        # pudb.set_trace()
+        # PULL the results to the output dir
         self.retrieveMessageCopy_checkAndConstruct()
         l_copy  = self.retrieve_resultsCopy(self.l_dmsg)
+
+        # If specified, generate a jpg preview
+        if options.b_jpgPreview:
+            self.jpgPreview_generate(l_DICOMdirs = self.lstr_outputPull)
 
     def run(self, options):
         """
@@ -849,6 +1012,9 @@ class PacsRetrieveApp(ChrisApp):
         d_ret                   = {
             'status': False
         }
+
+        self.options            = options
+
         self.b_pfurlQuiet       = options.b_pfurlQuiet
         self.str_outputDir      = options.outputdir
         self.str_inputDir       = options.inputdir
