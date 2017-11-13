@@ -29,7 +29,7 @@ MAINTAINER fnndsc "dev@babymri.org"
 ARG UID=1001
 ENV UID=$UID
 
-ENV APPROOT="/usr/src/pacsretrieve"  VERSION="1.1.5"
+ENV APPROOT="/usr/src/pacsretrieve"  VERSION="1.2.1"
 COPY ["pacsretrieve", "${APPROOT}"]
 COPY ["requirements.txt", "${APPROOT}"]
 WORKDIR $APPROOT
