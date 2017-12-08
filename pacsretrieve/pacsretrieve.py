@@ -118,6 +118,14 @@ str_args = """
 
         The actual action to perform. Default is 'retrieve'.
 
+    --pfurlQuiet
+
+        If specified, do not show interal pfurl communication
+
+    --serviceCallQuiet
+
+        If specified, do not show interal service call communication.
+
     QUERY ARGS:
 
     --patientID <patientID>] 
@@ -182,23 +190,24 @@ import shutil
 import time
 import glob 
 import subprocess
-import re 
+import re
+import datetime
 
 # import the Chris app superclass
 from chrisapp.base import ChrisApp
 
 class PacsRetrieveApp(ChrisApp):
-    AUTHORS = 'FNNDSC (dev@babyMRI.org)'
-    SELFPATH = os.path.dirname(os.path.abspath(__file__))
-    SELFEXEC = os.path.basename(__file__)
-    EXECSHELL = 'python3'
-    TITLE = 'PACS Retrieve'
-    CATEGORY = ''
-    TYPE = 'ds'
-    DESCRIPTION = 'An app to initiate a retrieve on series of interest'
-    DOCUMENTATION = 'http://wiki'
-    LICENSE = 'Opensource (MIT)'
-    VERSION = '1.0.0'
+    AUTHORS         = 'FNNDSC (dev@babyMRI.org)'
+    SELFPATH        = os.path.dirname(os.path.abspath(__file__))
+    SELFEXEC        = os.path.basename(__file__)
+    EXECSHELL       = 'python3'
+    TITLE           = 'PACS Retrieve'
+    CATEGORY        = ''
+    TYPE            = 'ds'
+    DESCRIPTION     = 'An app to both query a PACS and also retrieve a series of interest.'
+    DOCUMENTATION   = 'http://wiki'
+    LICENSE         = 'Opensource (MIT)'
+    VERSION         = '1.0.0'
 
     # Fill out this with key-value output descriptive info (such as an output file path
     # relative to the output dir) that you want to save to the output meta file when
@@ -208,59 +217,63 @@ class PacsRetrieveApp(ChrisApp):
     def __init__(self, *args, **kwargs):
         ChrisApp.__init__(self, *args, **kwargs)
 
-        self.__name__           = 'PACSRetrieveApp'
+        self.__name__               = 'PACSRetrieveApp'
 
         # Debugging control
-        self.b_useDebug         = False
-        self.str_debugFile      = '/tmp/pacsretrieve.txt'
-        self.b_quiet            = True
-        self.dp                 = pfmisc.debug(    
+        self.b_useDebug             = False
+        self.str_debugFile          = '/tmp/pacsretrieve.txt'
+        self.b_quiet                = True
+        self.dp                     = pfmisc.debug(    
                                             verbosity   = 0,
                                             level       = -1,
                                             within      = self.__name__
                                             )
-        self.pp                 = pprint.PrettyPrinter(indent=4)
+        self.pp                     = pprint.PrettyPrinter(indent=4)
 
         # Input/Output dirs
-        self.str_inputDir       = ''
-        self.str_outputDir      = ''
+        self.str_inputDir           = ''
+        self.str_outputDir          = ''
         # List of dirs that contain pulled data
-        self.lstr_outputPull    = []
+        self.lstr_outputPull        = []
 
         # Service and payload vars
-        self.str_pfdcm          = ''
-        self.str_msg            = ''
+        self.str_pfdcm              = ''
+        self.str_msg                = ''
         # list holder for commands
-        self.l_dmsg             = []
+        self.l_dmsg                 = []
         # a single retrieve command
-        self.d_msg              = {}
+        self.d_msg                  = {}
         # list holder for successful retrieves
-        self.l_retrieveOK       = []
+        self.l_retrieveOK           = []
 
         # Alternate, simplified CLI flags
-        self.str_patientID      = ''
-        self.str_PACSservice    = ''
+        self.str_patientID          = ''
+        self.str_PACSservice        = ''
         # Retrieve
-        self.str_priorHitsTable = ''
-        self.l_indexList        = []
+        self.str_priorHitsTable     = ''
+        self.l_indexList            = []
         # Query
-        self.str_patientID      = ''
-        self.str_PACSservice    = ''
+        self.str_patientID          = ''
+        self.str_PACSservice        = ''
 
         # Control
-        self.b_canRun           = False
+        self.b_canRun               = False
+        self.b_pfurlQuiet           = False
+        self.b_serviceCallQuiet     = False
 
         # Prior hits JSON dictionary
-        self.d_query            = {}
+        self.d_query                = {}
 
         # Summary report
-        self.b_summaryReport    = False
-        self.str_summaryKeys    = ''
-        self.l_summaryKeys      = []
-        self.str_summaryFile    = ''
+        self.b_summaryReport        = False
+        self.str_seriesSummaryKeys  = ''
+        self.str_seriesSummaryFile  = ''
+        self.str_studySummaryKeys   = ''
+        self.str_studySummaryFile   = ''
+        self.l_summaryKeys          = []
 
         # Result report
-        self.str_resultFile     = ''
+        self.str_resultFile         = ''
        
     def define_parameters(self):
         """
@@ -322,19 +335,33 @@ class PacsRetrieveApp(ChrisApp):
             optional    = True,
             help        = 'A template for directory names when pulled from "pfdcm".')
         self.add_argument(
-            '--summaryKeys',
-            dest        = 'str_summaryKeys',
+            '--seriesSummaryKeys',
+            dest        = 'str_seriesSummaryKeys',
             type        = str,
             default     = '',
             optional    = True,
-            help        = 'If specified, generate a summary report based on a comma separated key list.')
+            help        = 'If specified, generate a summary report for series based on a comma separated key list.')
         self.add_argument(
-            '--summaryFile',
-            dest        = 'str_summaryFile',
+            '--seriesSummaryFile',
+            dest        = 'str_seriesSummaryFile',
             type        = str,
             default     = '',
             optional    = True,
-            help        = 'If specified, save (overwrite) a summary report to passed file (in outputdir).')
+            help        = 'If specified, save (overwrite) a series summary report to passed file (in outputdir).')
+        self.add_argument(
+            '--studySummaryKeys',
+            dest        = 'str_studySummaryKeys',
+            type        = str,
+            default     = '',
+            optional    = True,
+            help        = 'If specified, generate a summary report for study data based on a comma separated key list.')
+        self.add_argument(
+            '--studySummaryFile',
+            dest        = 'str_studySummaryFile',
+            type        = str,
+            default     = '',
+            optional    = True,
+            help        = 'If specified, save (overwrite) a study summary report to passed file (in outputdir).')
         self.add_argument(
             '--numberOfHitsFile',
             dest        = 'str_numberOfHitsFile',
@@ -371,6 +398,14 @@ class PacsRetrieveApp(ChrisApp):
             action      = 'store_true',
             optional    = True,
             help        = 'Silence pfurl noise.'),
+        self.add_argument(
+            '--serviceCallQuiet',
+            dest        = 'b_serviceCallQuiet',
+            type        = bool,
+            default     = False,
+            action      = 'store_true',
+            optional    = True,
+            help        = 'Silence service call comms.'),
         self.add_argument(
             '--jpgPreview',
             dest        = 'b_jpgPreview',
@@ -412,9 +447,11 @@ class PacsRetrieveApp(ChrisApp):
             useDebug                = self.b_useDebug
         )
         
-        self.dp.qprint('Sending d_msg ==>\n %s' % self.df_print(d_msg), comms='tx')
+        if not self.b_serviceCallQuiet:
+            self.dp.qprint('Sending d_msg ==>\n %s' % self.df_print(d_msg), comms='tx')
         d_response      = json.loads(serviceCall())
-        self.dp.qprint('Received d_response <==\n %s' % self.df_print(d_response), comms='rx')
+        if not self.b_serviceCallQuiet:
+            self.dp.qprint('Received d_response <==\n %s' % self.df_print(d_response), comms='rx')
         return d_response
 
     def man_get(self):
@@ -446,17 +483,25 @@ class PacsRetrieveApp(ChrisApp):
                 }' /tmp
             """,
             "callingSyntax2": """
-                python3 pacsretrieve.py --pfdcm ${HOST_IP}:5015         \\
-                                        --PatientID LILLA-9731          \\
-                                        --PACSservice orthanc
+                python3 pacsretrieve.py --pfdcm             ${HOST_IP}:5015     \\
+                                        --PatientID         LILLA-9731          \\
+                                        --PACSservice       orthanc             \\
+                                        --summaryKeys       "PatientID,PatientAge,StudyDescription,StudyInstanceUID,SeriesDescription,SeriesInstanceUID,NumberOfSeriesRelatedInstances" \\
+                                        --summaryFile       summary.txt         \\
+                                        --resultFile        results.json        \\
+                                        --numberOfHitsFile  hits.txt            \\
+                                        --action            query               \\
+                                        --serviceCallQuiet                      \\
+                                        --pfurlQuiet                            \\
+                                        /tmp /tmp
             """,
             "callingSyntax3": """
-                python3 pacsretrieve.py --pfdcm ${HOST_IP}:5015         \\
-                                        --PACSservice orthanc           \\
-                                        --pfurlQuiet                    \\
-                                        --priorHitsTable results.json   \\
-                                        --indexList 1,2,3               \\
-                                        /tmp/query                      \\
+                python3 pacsretrieve.py --pfdcm             ${HOST_IP}:5015     \\
+                                        --PACSservice       orthanc             \\
+                                        --pfurlQuiet                            \\
+                                        --priorHitsTable    results.json        \\
+                                        --indexList         1,2,3               \\
+                                        /tmp/query                              \\
                                         /tmp/data
             """
         }
@@ -490,13 +535,15 @@ class PacsRetrieveApp(ChrisApp):
         hits            = 0
         for k,v in kwargs.items():
             if k == 'hitsFile':     str_hitsFile    = v
-            if k == 'hits':         hits            = v
+            if k == 'seriesHits':   seriesHits      = v
+            if k == 'studyHits':    studyHits       = v
 
         if len(str_hitsFile):
             str_FQhitsFile    = os.path.join(self.str_outputDir, str_hitsFile)
-            self.dp.qprint('Saving number of hits to %s' % str_FQhitsFile )
+            self.dp.qprint('Saving number of series and study hits to %s' % str_FQhitsFile )
             f = open(str_FQhitsFile, 'w')
-            f.write('%d' % hits)
+            f.write('series:    %d\n' % seriesHits)
+            f.write('studies:   %d\n' % studyHits)
             f.close()
 
     def queryTable_read(self, *args, **kwargs):
@@ -534,38 +581,103 @@ class PacsRetrieveApp(ChrisApp):
             f.write('%s' % js_results)
             f.close()
 
+    def ageCalc(self, astr_birthDate, astr_scanDate):
+        """
+        Calculate and return the age based on the difference between the
+        scan data and birthdate
+        """
+        str_age                 = ""
+        birthY, birthM, birthD  = int(astr_birthDate[0:4]), int(astr_birthDate[4:6]), int(astr_birthDate[6:8])
+        scanY, scanM, scanD     = int(astr_scanDate[0:4]), int(astr_scanDate[4:6]), int(astr_scanDate[6:8])
+
+        birthDate = datetime.date(birthY, birthM, birthD)
+        scanDate = datetime.date(scanY, scanM, scanD)
+
+        dateDiff = scanDate - birthDate
+        if dateDiff.days < 31:
+            str_age = '%03dD' % dateDiff.days
+        elif dateDiff.days < (9*30.42):
+            str_age = '%03dW' % (dateDiff.days / 7)
+        elif dateDiff.days < (2*365.25):
+            str_age = '%03dM' % (dateDiff.days / 30.42)
+        else:
+            str_age = '%03dY' % (dateDiff.days / 365.25)
+        return str_age
+
+    def entry_reprocessForKey(self, *args, **kwargs):
+        """
+        Reprocess a key/entry for special handling
+        """
+        str_ret     = "notReprocessed"
+        d_entry     = {}
+        str_key     = ""
+
+        for k,v in kwargs.items():
+            if k == 'entry':    d_entry     = v
+            if k == 'key':      str_key     = v
+
+        if str_key == 'PatientAge':
+            # Here, we calculate the PatientAge from the difference
+            # between the ScanDate and the PatientBirthDate
+            str_scanDate    = d_entry['StudyDate']['value']
+            str_birthDate   = d_entry['PatientBirthDate']['value']
+            str_ret         = self.ageCalc(str_birthDate, str_scanDate)
+
+        return str_ret
+
     def summaryReport_process(self, *args, **kwargs):
         """
         Generate a summary report based on CLI specs
         """
 
-        l_data                  = []
-        self.str_summaryKeys    = ''
+        l_dataStudy                 = []
+        l_dataSeries                = []
+        # self.str_seriesSummaryKeys  = ''
+        # self.str_studySummaryKeys   = ''
         for k,v in kwargs.items():
-            if k == 'summaryKeys':  self.str_summaryKeys    = v
-            if k == 'summaryFile':  self.str_summaryFile    = v
-            if k == 'data':         l_data                  = v
+            # if k == 'seriesSummaryKeys':    self.str_seriesSummaryKeys  = v
+            # if k == 'seriesSummaryFile':    self.str_seriesSummaryFile  = v
+            # if k == 'studySummaryKeys':     self.str_studySummaryKeys   = v
+            # if k == 'studySummaryFile':     self.str_studySummaryFile   = v
+            if k == 'dataStudy':            l_dataStudy                 = v
+            if k == 'dataSeries':           l_dataSeries                = v
         
-        str_report      = ''
-        l_summaryKeys   = self.str_summaryKeys.split(',')
+        pudb.set_trace()
+        for report in ['series', 'study']:
+            str_report      = ''
+            if report == 'series':  
+                l_data              = l_dataSeries
+                l_summaryKeys       = self.str_seriesSummaryKeys.split(',')
+                str_summaryFile     = self.str_seriesSummaryFile
+            if report == 'study':   
+                l_data              = l_dataStudy
+                l_summaryKeys       = self.str_studySummaryKeys.split(',')
+                str_summaryFile     = self.str_studySummaryFile
 
-        if len(l_data):
-            # Header
-            for key in l_summaryKeys:
-                str_report  = str_report + "%-60s\t" % key
-
-            # Body
-            for entry in l_data:
-                str_report  = str_report + "\n"
+            if len(l_data):
+                # Header
                 for key in l_summaryKeys:
-                    str_report  = str_report + "%-60s\t" % (entry[key]['value'])
+                    str_report  = str_report + "%-60s\t" % key
 
-        if len(self.str_summaryFile):
-            str_FQsummaryFile   = os.path.join(self.str_outputDir, self.str_summaryFile) 
-            self.dp.qprint('Saving summary to %s' % str_FQsummaryFile )
-            f = open(str_FQsummaryFile, 'w')
-            f.write(str_report)
-            f.close()
+                # Body
+                for entry in l_data:
+                    str_report  = str_report + "\n"
+                    for key in l_summaryKeys:
+                        try:
+                            str_value   = entry[key]['value']
+                        except:
+                            str_value   = self.entry_reprocessForKey(
+                                                entry   = entry, 
+                                                key     = key
+                                                )
+                        str_report  = str_report + "%-60s\t" % (str_value)
+
+            if len(str_summaryFile):
+                str_FQsummaryFile   = os.path.join(self.str_outputDir, str_summaryFile) 
+                self.dp.qprint('Saving %s summary to %s' % (report, str_FQsummaryFile) )
+                f = open(str_FQsummaryFile, 'w')
+                f.write(str_report)
+                f.close()
 
     def directMessage_checkAndConstruct(self, options):
         """
@@ -750,13 +862,14 @@ class PacsRetrieveApp(ChrisApp):
         self.b_canRun   = True
         return self.b_canRun
 
-    def outputFiles_generate(self, options, hits, d_ret, l_data):
+    def outputFiles_generate(self, options, d_ret, l_dataStudy, l_dataSeries):
         """
         Check and generate output files.
         """
         if len(options.str_numberOfHitsFile):
             self.numberOfHitsReport_process(
-                                        hits        = hits,
+                                        studyHits   = len(l_dataStudy),
+                                        seriesHits  = len(l_dataSeries),
                                         hitsFile    = options.str_numberOfHitsFile
                                         )
 
@@ -766,11 +879,14 @@ class PacsRetrieveApp(ChrisApp):
                                         resultFile  = options.str_resultFile
                                         )
 
-        if len(options.str_summaryKeys):
+        if len(options.str_seriesSummaryKeys) or len(options.str_studySummaryKeys):
             self.summaryReport_process  ( 
-                                        data        = l_data,
-                                        summaryKeys = options.str_summaryKeys,
-                                        summaryFile = options.str_summaryFile
+                                        dataStudy           = l_dataStudy,
+                                        dataSeries          = l_dataSeries
+                                        # seriesSummaryKeys   = options.str_seriesSummaryKeys,
+                                        # seriesSummaryFile   = options.str_seriesSummaryFile,
+                                        # studySummaryKeys    = options.str_studySummaryKeys,
+                                        # studySummaryFile    = options.str_studySummaryFile
                                         )
        
     def query_run(self, options):
@@ -781,11 +897,14 @@ class PacsRetrieveApp(ChrisApp):
         self.queryMessage_checkAndConstruct(options)
 
         if self.b_canRun:
-            d_ret   = self.service_call(msg = self.d_msg)
-            l_data  = d_ret['query']['data']
-            hits    = len(l_data) 
-            self.dp.qprint('Query returned %d study hits' % hits)
-            self.outputFiles_generate(options, hits, d_ret, l_data)
+            d_ret           = self.service_call(msg = self.d_msg)
+            l_dataSeries    = d_ret['query']['data']
+            l_dataStudy     = d_ret['query']['dataStudy']
+            hitsSeries      = len(l_dataSeries)
+            hitsStudies     = len(l_dataStudy) 
+            self.dp.qprint('Query returned %d series hits.' % hitsSeries)
+            self.dp.qprint('Query returned %d study  hits.' % hitsStudies)
+            self.outputFiles_generate(options, d_ret, l_dataStudy, l_dataSeries)
 
         return d_ret
 
@@ -1013,15 +1132,21 @@ class PacsRetrieveApp(ChrisApp):
         Define the code to be run by this plugin app.
         """
 
-        d_ret                   = {
+        d_ret                       = {
             'status': False
         }
 
-        self.options            = options
+        self.options                = options
 
-        self.b_pfurlQuiet       = options.b_pfurlQuiet
-        self.str_outputDir      = options.outputdir
-        self.str_inputDir       = options.inputdir
+        self.b_pfurlQuiet           = options.b_pfurlQuiet
+        self.b_serviceCallQuiet     = options.b_serviceCallQuiet
+        self.str_outputDir          = options.outputdir
+        self.str_inputDir           = options.inputdir
+
+        self.str_seriesSummaryKeys  = options.str_seriesSummaryKeys
+        self.str_seriesSummaryFile  = options.str_seriesSummaryFile
+        self.str_studySummaryKeys   = options.str_studySummaryKeys
+        self.str_studySummaryFile   = options.str_studySummaryFile
 
         if options.b_version:
             print(str_version)
