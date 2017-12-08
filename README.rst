@@ -26,11 +26,12 @@ Using ``docker run``
 
 .. code-block:: bash
 
-  docker run -t--rm
-    -v $(pwd)/../pl-pacsquery/out:/input \
-    -v $(pwd)/output:/output             \
-    fnndsc/pl-pacsretrieve pacsretrieve.py
-    --aet CHIPS --aec ORTHANC --aetListener CHIPS \
-    --serverIP 192.168.1.40 --serverPort 4242 \
-    --seriesUIDS 0 --dataLocation /incoming
-    /input /output
+  docker run -t --rm
+    -v /tmp:/tmp \
+    fnndsc/pl-pacsretrieve pacsretrieve.py \
+                  --pfdcm ${HOST_IP}:5015         \
+                  --PACSservice orthanc           \
+                  --pfurlQuiet                    \
+                  --priorHitsTable results.json   \
+                  --indexList 1,2,3               \
+    /tmp/query /tmp/data
