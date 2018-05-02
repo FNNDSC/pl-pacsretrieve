@@ -46,7 +46,3 @@ RUN apt-get update \
   && pip install -r requirements.txt
 
 CMD ["pacsretrieve.py", "--json"]
-<<<<<<< HEAD
-=======
-
->>>>>>> cd678d6785ca57716c02ee0447c5bb6ace02e206
