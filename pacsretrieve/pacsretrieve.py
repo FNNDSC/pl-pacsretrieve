@@ -55,7 +55,7 @@ class PacsRetrieveApp(ChrisApp):
     DESCRIPTION = 'An app to find data of interest on the PACS'
     DOCUMENTATION = 'http://wiki'
     LICENSE = 'Opensource (MIT)'
-    VERSION = '0.1'
+    VERSION = '1.1.0'
 
     def define_parameters(self):
         """ Define parameters """
