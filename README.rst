@@ -1,6 +1,6 @@
-###############
-pl-pacsretrieve
-###############
+#####################
+pl-pacsretrieve 1.3.0
+#####################
 
 .. image:: https://img.shields.io/github/tag/fnndsc/pl-pacsretrieve.svg?style=flat-square   :target: https://github.com/FNNDSC/pl-pacsretrieve
 .. image:: https://img.shields.io/docker/build/fnndsc/pl-pacsretrieve.svg?style=flat-square   :target: https://hub.docker.com/r/fnndsc/pl-pacsretrieve/
