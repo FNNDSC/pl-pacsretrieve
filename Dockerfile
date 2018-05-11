@@ -45,4 +45,4 @@ RUN apt-get update \
   && apt-get install -y libssl-dev libcurl4-openssl-dev bsdmainutils \
   && pip install -r requirements.txt
 
-CMD ["pacsretrieve.py", "--json"]
+CMD ["pacsretrieve.py", "--help"]
